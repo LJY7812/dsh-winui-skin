@@ -1,0 +1,53 @@
+{
+  "name": "dsh-winui-skin",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness 皮肤插件：把 Web/Desktop 客户端改造成 Windows 11 WinUI 3 / Fluent 外观（Segoe UI Variable、Mica 底色、亚克力菜单、Fluent 圆角与语义色）。",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "cordis",
+    "plugin",
+    "theme",
+    "skin",
+    "winui",
+    "fluent",
+    "windows11"
+  ],
+  "type": "module",
+  "license": "MIT",
+  "author": "LJY7812",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LJY7812/dsh-winui-skin.git"
+  },
+  "homepage": "https://github.com/LJY7812/dsh-winui-skin#readme",
+  "bugs": {
+    "url": "https://github.com/LJY7812/dsh-winui-skin/issues"
+  },
+  "scripts": {
+    "test": "node tools/test-skin.mjs"
+  },
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-theme"
+      ]
+    }
+  }
+}

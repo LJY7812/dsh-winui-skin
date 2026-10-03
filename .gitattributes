@@ -1,0 +1,6 @@
+# Normalize everything to LF in the repository, but check Windows-native
+# scripts out with CRLF so they behave in cmd.exe and Windows PowerShell.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.png binary

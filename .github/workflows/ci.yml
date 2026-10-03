@@ -1,0 +1,20 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # The contract test uses only Node built-ins: it loads lib/client.js the
+      # way the DSH browser module system does, runs apply(), checks both
+      # disposers, and validates every override token name against the frozen
+      # design-token fixture.
+      - run: node tools/test-skin.mjs

@@ -1,0 +1,6 @@
+# dsh-winui-skin bundle patch: one dual-face row over the Web / Desktop profile.
+# The row name resolves from the profile's own node_modules, so the installed
+# copy of this package is what boots.
+- insert:
+    - id: winui-skin
+      name: dsh-winui-skin

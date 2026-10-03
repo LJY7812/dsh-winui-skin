@@ -1,0 +1,5 @@
+# Scratch and generated material that must never be committed.
+node_modules/
+.plugin-manager/
+*.log
+_skipped.txt
