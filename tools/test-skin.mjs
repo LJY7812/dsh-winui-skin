@@ -32,6 +32,42 @@ function check(ok, message) {
 const source = fs.readFileSync(BUNDLE, 'utf8')
 const styles = []
 let registration
+
+/** Minimal DOM node good enough for the accent probe and the <style> tag. */
+function stubElement(tag) {
+  return {
+    tagName: tag.toUpperCase(),
+    dataset: {},
+    attributes: {},
+    textContent: '',
+    removed: false,
+    parent: undefined,
+    children: [],
+    style: { cssText: '', color: '', backgroundColor: '' },
+    setAttribute(name, value) {
+      this.attributes[name] = value
+    },
+    getAttribute(name) {
+      return this.attributes[name]
+    },
+    appendChild(node) {
+      node.parent = this
+      this.children.push(node)
+      return node
+    },
+    remove() {
+      this.removed = true
+      const host = this.parent
+      if (host) host.children = host.children.filter((child) => child !== this)
+    },
+  }
+}
+
+// A simulated Windows accent: the probe reads these through getComputedStyle.
+let systemAccentColor = 'rgb(0, 117, 255)'
+let systemAccentText = 'rgb(255, 255, 255)'
+let systemColorSupported = true
+
 const sandbox = {
   console,
   window: {
@@ -42,25 +78,24 @@ const sandbox = {
     },
   },
   document: {
-    createElement(tag) {
-      return {
-        tagName: tag.toUpperCase(),
-        dataset: {},
-        textContent: '',
-        removed: false,
-        remove() {
-          this.removed = true
-        },
-      }
-    },
-    head: {
-      appendChild(node) {
-        styles.push(node)
-        return node
-      },
-    },
+    body: stubElement('body'),
+    head: stubElement('head'),
+    createElement: stubElement,
+    addEventListener() {},
+    removeEventListener() {},
   },
+  getComputedStyle: () => ({ color: systemAccentColor, backgroundColor: systemAccentText }),
+  CSS: { supports: (property, value) => systemColorSupported && property === 'color' && (value === 'AccentColor' || value === 'AccentColorText') },
+  addEventListener() {},
+  removeEventListener() {},
+  setInterval: () => 0,
+  clearInterval() {},
 }
+sandbox.document.head.appendChild = (node) => {
+  styles.push(node)
+  return node
+}
+sandbox.window.document = sandbox.document
 sandbox.globalThis = sandbox
 vm.createContext(sandbox)
 vm.runInContext(source, sandbox, { filename: 'client.js' })
@@ -84,6 +119,7 @@ check(required.length === 0, 'factory requires no modules (no React / no UI pack
 // --------------------------------------------------------------- 2. apply ---
 const effects = []
 let overrideCall
+const overrideCalls = []
 const disposers = []
 const ctx = {
   effect(callback, label) {
@@ -94,6 +130,7 @@ const ctx = {
   },
   theme: {
     overrideTokens(source, tokens) {
+      overrideCalls.push(tokens['--dsw-alias-brand-primary'].light)
       overrideCall = { source, tokens }
       return () => {
         overrideCall = undefined
@@ -113,11 +150,93 @@ check(disposers.length === 2, 'both effects return a disposer')
 // validate what apply() actually installed.
 const installed = overrideCall
 const installedCss = styles[0]?.textContent ?? ''
+const probeBeforeDispose = sandbox.document.body.children.length
 for (const dispose of disposers) dispose()
 check(styles[0]?.removed === true, 'disposing removes the stylesheet (HMR / unload safe)')
 check(overrideCall === undefined, 'disposing releases the token layer')
+check(probeBeforeDispose === 1, 'apply mounts exactly one accent probe (got ' + probeBeforeDispose + ')')
+check(sandbox.document.body.children.length === 0, 'disposing removes the accent probe')
 
-// ------------------------------------------------ 3. token-name contract ---
+// ------------------------------------------- 3. system accent binding ---
+// apply() above ran against a simulated `AccentColor` of rgb(0, 117, 255), so
+// the installed layer must already carry shades derived from it.
+const systemAccent = { rgb: [0, 117, 255], onFill: [255, 255, 255] }
+const derived = mod.buildTokens(systemAccent)
+const fallback = mod.buildTokens(undefined)
+
+check(
+  installed?.tokens?.['--dsw-alias-brand-primary']?.light === derived['--dsw-alias-brand-primary'].light,
+  'apply() binds the accent tokens to the system accent (' + installed?.tokens?.['--dsw-alias-brand-primary']?.light + ')',
+)
+check(
+  derived['--dsw-alias-brand-primary'].light !== fallback['--dsw-alias-brand-primary'].light,
+  'a system accent overrides the shipped WinUI blue',
+)
+check(
+  /^#[0-9a-f]{6}$/.test(derived['--dsw-alias-brand-primary'].light)
+  && /^#[0-9a-f]{6}$/.test(derived['--dsw-alias-brand-primary'].dark),
+  'derived accent shades are hex colours (light ' + derived['--dsw-alias-brand-primary'].light + ', dark ' + derived['--dsw-alias-brand-primary'].dark + ')',
+)
+check(
+  derived['--dsw-alias-label-primary-foreground'].light === '#ffffff',
+  'text on the accent comes from AccentColorText (got ' + derived['--dsw-alias-label-primary-foreground'].light + ')',
+)
+check(
+  fallback['--dsw-alias-brand-primary'].light === '#0067c0' && fallback['--dsw-alias-brand-primary'].dark === '#4cc2ff',
+  'without a readable system accent the WinUI default blue is restored',
+)
+
+// Text on an accent fill must actually be readable: a mid-light accent such as
+// the lightened dark-mode fill gets black text, not white.
+function rgbOf(hex) {
+  return [1, 3, 5].map((index) => parseInt(hex.slice(index, index + 2), 16))
+}
+function luminance(hex) {
+  const channels = rgbOf(hex).map((channel) => {
+    const value = channel / 255
+    return value <= 0.03928 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4)
+  })
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+}
+function contrast(a, b) {
+  const la = luminance(a) + 0.05
+  const lb = luminance(b) + 0.05
+  return la > lb ? la / lb : lb / la
+}
+
+for (const [label, table] of [['system accent', derived], ['WinUI fallback', fallback]]) {
+  for (const mode of ['light', 'dark']) {
+    const fill = table['--dsw-alias-brand-primary'][mode]
+    const onFill = table['--dsw-alias-label-primary-foreground'][mode]
+    const ratio = contrast(fill, onFill)
+    check(
+      ratio >= 4.5,
+      label + ' ' + mode + ': text on the accent fill keeps 4.5:1 (' + onFill + ' on ' + fill + ' = ' + ratio.toFixed(2) + ':1)',
+    )
+    const link = table['--dsw-alias-link'][mode]
+    const base = table['--dsw-alias-bg-base'][mode]
+    const linkRatio = contrast(base, link)
+    check(
+      linkRatio >= 4.5,
+      label + ' ' + mode + ': accent links keep 4.5:1 on the canvas (' + link + ' on ' + base + ' = ' + linkRatio.toFixed(2) + ':1)',
+    )
+  }
+}
+
+// ------------------------------------------------ 4. radius ladder ---
+// Issue guard: collapsing the scale onto near-duplicate values (2/4/5/7/8/8)
+// made large panels read as squares and small controls look off by a pixel.
+const RADIUS_ORDER = ['--dsw-radius-xs', '--dsw-radius-sm', '--dsw-radius-md', '--dsw-radius-lg', '--dsw-radius-xl', '--dsw-radius-panel']
+const ladder = RADIUS_ORDER.map((name) => parseFloat(fallback[name].light))
+check(ladder.every((value) => Number.isFinite(value)), 'the radius ladder is all px values (' + ladder.join('/') + ')')
+check(
+  ladder.every((value, index) => index === 0 || value >= ladder[index - 1]),
+  'the radius ladder never decreases (' + ladder.join('/') + ')',
+)
+check(ladder[0] === 2 && ladder[1] === 4, 'controls anchor on Fluent ControlCornerRadius 4 (' + ladder.slice(0, 2).join('/') + ')')
+check(ladder[5] >= 8, 'the largest panel surface keeps room to breathe (' + ladder[5] + 'px)')
+
+// ------------------------------------------------ 5. token-name contract ---
 /**
  * Every custom property the shipped design system declares, frozen into
  * `tools/design-tokens.txt` by `tools/freeze-design-tokens.mjs` (which reads

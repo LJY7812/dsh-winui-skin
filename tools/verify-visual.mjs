@@ -262,7 +262,119 @@ try {
   await new Promise((r) => setTimeout(r, 1800))
   const appLight = await shoot('04-app-light')
 
+  // Corner-radius census: a skin that invents intermediate radii produces a
+  // smear of near-duplicate values, which reads as "odd corners". Group every
+  // rounded element by its computed radius so the distribution is visible.
+  const radiusCensus = await evaluate(`(() => {
+    const radiusTokens = {}
+    const bodyStyle = getComputedStyle(document.body)
+    for (const name of ['--dsw-radius-xs','--dsw-radius-sm','--dsw-radius-md','--dsw-radius-lg','--dsw-radius-xl','--dsw-radius-panel']) {
+      radiusTokens[name] = bodyStyle.getPropertyValue(name).trim()
+    }
+    const groups = new Map()
+    for (const el of document.querySelectorAll('body *')) {
+      const s = getComputedStyle(el)
+      const radius = s.borderTopLeftRadius
+      if (!radius || radius === '0px') continue
+      const box = el.getBoundingClientRect()
+      if (box.width < 6 || box.height < 6) continue
+      const entry = groups.get(radius) ?? { count: 0, samples: [] }
+      entry.count += 1
+      if (entry.samples.length < 3) {
+        entry.samples.push(
+          el.tagName.toLowerCase()
+          + (typeof el.className === 'string' && el.className ? '.' + el.className.split(' ')[0].slice(0, 24) : '')
+          + ' ' + Math.round(box.width) + 'x' + Math.round(box.height)
+          + ' "' + (el.textContent ?? '').trim().slice(0, 14) + '"',
+        )
+      }
+      groups.set(radius, entry)
+    }
+    return {
+      radiusTokens,
+      distribution: [...groups.entries()]
+        .sort((a, b) => b[1].count - a[1].count)
+        .map(([radius, v]) => radius + ' x' + v.count + '  e.g. ' + v.samples.join(' | ')),
+    }
+  })()`)
+  log('')
+  log('--- corner-radius census (light)')
+  log(JSON.stringify(radiusCensus, null, 2))
+
+  // Settings is the densest surface (cards, switches, steppers), so capture it
+  // too: it is where an inconsistent radius scale shows up first.
+  const openedSettings = await evaluate(`(async () => {
+    const candidates = [...document.querySelectorAll('button, a, [role=button], [role=menuitem], [role=tab], li, div')]
+      .filter((el) => (el.textContent ?? '').trim() === '设置' || (el.textContent ?? '').trim() === 'Settings')
+    const target = candidates.at(-1)
+    if (!target) return 'settings entry not found'
+    target.click()
+    await new Promise((r) => setTimeout(r, 2500))
+    return 'clicked settings'
+  })()`)
+  log('settings        : ' + openedSettings)
+  await new Promise((r) => setTimeout(r, 1500))
+  const settingsLight = await shoot('05-settings-light')
+
+  // Attribute every rounded surface on the densest page to the exact token it
+  // reads: overwrite the six radius tokens with distinct odd values, census,
+  // then restore. The plain census shows the resulting px, not who asked for it.
+  const attribution = await evaluate(`(() => {
+    const sentinel = {
+      '--dsw-radius-xs': '11px',
+      '--dsw-radius-sm': '13px',
+      '--dsw-radius-md': '15px',
+      '--dsw-radius-lg': '17px',
+      '--dsw-radius-xl': '19px',
+      '--dsw-radius-panel': '21px',
+    }
+    const inverse = Object.fromEntries(Object.entries(sentinel).map(([k, v]) => [v, k]))
+    const previous = {}
+    for (const [name, value] of Object.entries(sentinel)) {
+      previous[name] = document.body.style.getPropertyValue(name)
+      document.body.style.setProperty(name, value)
+    }
+    const groups = {}
+    for (const el of document.querySelectorAll('body *')) {
+      const radius = getComputedStyle(el).borderTopLeftRadius
+      const token = inverse[radius]
+      if (!token) continue
+      const box = el.getBoundingClientRect()
+      if (box.width < 6 || box.height < 6) continue
+      const entry = groups[token] ?? (groups[token] = { count: 0, samples: [] })
+      entry.count += 1
+      if (entry.samples.length < 5) {
+        entry.samples.push(
+          el.tagName.toLowerCase()
+          + (typeof el.className === 'string' && el.className ? '.' + el.className.split(' ')[0].slice(0, 22) : '')
+          + ' ' + Math.round(box.width) + 'x' + Math.round(box.height)
+          + ' "' + (el.textContent ?? '').trim().slice(0, 12) + '"',
+        )
+      }
+    }
+    for (const name of Object.keys(sentinel)) {
+      if (previous[name]) document.body.style.setProperty(name, previous[name])
+      else document.body.style.removeProperty(name)
+    }
+    return Object.fromEntries(Object.entries(groups).map(([token, v]) => [
+      token,
+      v.count + ' surfaces  e.g. ' + v.samples.join(' | '),
+    ]))
+  })()`)
+  log('--- radius token attribution (settings page, light)')
+  log(JSON.stringify(attribution, null, 2))
+
+  await send('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-color-scheme', value: 'dark' }],
+  })
+  await new Promise((r) => setTimeout(r, 1800))
+  const settingsDark = await shoot('06-settings-dark')
+
   // Remove exactly what the plugin installs, to prove the look came from it.
+  await send('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-color-scheme', value: 'light' }],
+  })
+  await new Promise((r) => setTimeout(r, 1200))
   await evaluate(`(() => {
     for (const tag of document.querySelectorAll('style[data-plugin="dsh-winui-skin"]')) tag.remove()
     for (const name of ${JSON.stringify(PROBE)}) document.body.style.removeProperty(name)
@@ -270,7 +382,7 @@ try {
     return true
   })()`)
   await new Promise((r) => setTimeout(r, 1200))
-  const unloaded = await shoot('05-unloaded')
+  const unloaded = await shoot('07-unloaded')
 
   log('')
   log('=== skin effect (light) ===')
