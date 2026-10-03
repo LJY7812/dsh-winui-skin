@@ -1,7 +1,7 @@
 {
   "name": "dsh-winui-skin",
-  "version": "0.1.0",
-  "description": "DeepSeek Harness 皮肤插件：把 Web/Desktop 客户端改造成 Windows 11 WinUI 3 / Fluent 外观（Segoe UI Variable、Mica 底色、亚克力菜单、Fluent 圆角与语义色）。",
+  "version": "0.2.0",
+  "description": "DeepSeek Harness 皮肤插件：把 Web/Desktop 客户端改造成 Windows 11 WinUI 3 / Fluent 外观（Segoe UI Variable、Mica 底色、亚克力菜单、Fluent 圆角与语义色），并跟随系统强调色。",
   "keywords": [
     "deepseek",
     "harness",

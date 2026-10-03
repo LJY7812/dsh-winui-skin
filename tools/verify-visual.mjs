@@ -199,6 +199,18 @@ try {
   // Let the app's own prefers-color-scheme listener drive the palette switch.
   const light = await shoot('01-light')
 
+  // The skin's accent source: the host route that reads the Windows accent
+  // registry key. Fetched from the page so it goes through the same auth.
+  const accentRoute = await evaluate(`(async () => {
+    try {
+      const response = await fetch('/api/dsh-winui-accent', { cache: 'no-store' })
+      return response.status + ' ' + (await response.text()).slice(0, 200)
+    } catch (error) {
+      return 'ERR ' + error.message
+    }
+  })()`)
+  log('accent route    : ' + accentRoute)
+
   // Anything drawing a ring is worth naming: the Fluent focus rect must not
   // land on elements the original skin left unringed.
   const focusDiag = await evaluate(`(() => {

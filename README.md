@@ -4,15 +4,15 @@
 
 给 DeepSeek Harness 的 Web / Desktop 客户端换上一套 **Windows 11 / WinUI 3（Fluent 2）** 皮肤。
 
-插件是纯客户端的一半（host 半边是空实现），做三件事：
+插件是 host + client 两半：
 
-1. **叠加一层 Fluent 主题 token**：通过 `ctx.theme.overrideTokens()` 把 133 个 DSH 设计 token 覆盖成 WinUI 3 的官方色板与几何值，每个 token 都给出 `{ light, dark }` 一对取值。
-2. **绑定系统强调色**：读出 Windows 的强调色（CSS 系统色 `AccentColor`），按 WinUI 对 `SystemAccentColor` 的映射推导明暗色阶，跟着系统一起变。
+1. **host 半边读系统强调色**：用 `reg query` 读 Windows 写强调色的注册表键，通过 `/api/dsh-winui-accent` 这个 loopback 路由交给浏览器半边（读不到就答 `supported:false`；全程 try/catch，绝不会拖垮宿主）。
+2. **client 半边叠加 Fluent token 层**：通过 `ctx.theme.overrideTokens()` 把 133 个 DSH 设计 token 覆盖成 WinUI 3 的官方色板与几何值，每个 token 都给出 `{ light, dark }` 一对取值；强调色相关的那批按 host 报来的色阶填。
 3. **注入一份插件自有样式表**：负责颜色 token 表达不了的部分——Fluent 字体栈、Windows 11 细滚动条、焦点矩形、Mica 画布层次、亚克力弹出层描边。
 
-色值取自 WinUI 3 源码的 `Common_themeresources_any.xaml`（注意其中有 `x:Key="Default"` 的才是**深色**字典）、`CornerRadius_themeresources.xaml`、`AcrylicBrush_themeresources.xaml`、`ListViewItem_themeresources.xaml`、`TextBlock_themeresources.xaml` 与 `FocusRectManager.cpp`。
+色值取自 WinUI 3 源码的 `Common_themeresources_any.xaml`（注意其中有 `x:Key="Default"` 的才是**深色**字典）、`CornerRadius_themeresources.xaml`、`AcrylicBrush_themeresources.xaml`、`ListViewItem_themeresources.xaml`、`TextBlock_themeresources.xaml` 与 `FocusRectManager.cpp`；强调色阶直接取自系统本身。
 
-卸载插件时 token 层、强调色探针与样式表一起回收，外观立刻回到 DSH 原样。
+卸载时 token 层与样式表一起回收，路由随 host 半边一起撤销，外观立刻回到 DSH 原样。
 
 ## 预览
 
@@ -23,22 +23,37 @@
 
 `docs/preview/` 里还有首次运行弹窗与**卸载后**的原版对照图 `07-unloaded.png`。
 
+截图用的是本机的真实系统强调色（金色 `#FFB900`）——所以按钮、开关、链接、选中态都是金色的，而不是 WinUI 默认蓝。
+
 ## 跟随系统配色
 
-两件事分开看：
+**浅色 / 深色**：DSH 外观设置里的「跟随系统」本来就走 `prefers-color-scheme`，本皮肤对两套色板同时生效，所以它一直是跟随的。
 
-- **浅色 / 深色**：DSH 外观设置里的「跟随系统」本来就走 `prefers-color-scheme`，本皮肤对两套色板同时生效，所以它一直是跟随的。
-- **系统强调色**：Windows 允许用户自选强调色，网页唯一能读到它的途径是 CSS 系统色关键字 `AccentColor` / `AccentColorText`（没有对应的 media query 或 JS API）。插件因此：
+**系统强调色**：这一项走了弯路，值得说清楚。
 
-  1. 先 `CSS.supports('color', 'AccentColor')` 判断引擎是否支持——不支持就直接回退到 WinUI 默认蓝，**不会**把继承来的文字颜色误当成强调色；
-  2. 用一个隐藏探针读出 `AccentColor` 与 `AccentColorText`；
-  3. 按 WinUI 自己对 `SystemAccentColor` 的映射推导明暗两套色阶（浅色填充 = Dark1 变暗 10%、深色填充 = Light2 提亮 35%、强调文字 = Dark2 / Light3）；
-  4. 用 WCAG 相对亮度选按钮上的文字颜色，保证 4.5:1 对比度；
-  5. 在窗口重新获得焦点、页面重新可见、以及每 20 秒各复查一次（Windows 改强调色不触发任何事件），发现变化就重铺 token 层。
+网页唯一"看似"能读到系统强调色的途径是 CSS 系统色关键字 `AccentColor`。但实测在 Windows 11 上**它并不反映你的强调色**：
 
-  这一路只用到设计系统里已有的 token，所以强调色一变，按钮、开关、链接、选中态、用户气泡、文本选区会**一起**跟着变。
+| 来源 | 值 |
+| --- | --- |
+| `UISettings.GetColorValue(UIColorType.Accent)`（权威） | `#FFB900` 金色 |
+| `HKCU\...\Explorer\Accent\AccentPalette` | Light3 `#FFE845` → Accent `#FFB900` → Dark3 `#5C2100` |
+| Chromium 的 CSS `AccentColor` | `rgb(0, 117, 255)` 蓝色 ❌ |
 
-> 想固定成 WinUI 默认蓝而不是跟随系统？把 `lib/client.js` 里 `readSystemAccent()` 的返回值直接改成 `undefined` 即可（`accentShades(undefined)` 就是官方默认色阶）。
+所以第一版"跟随系统"是假的：皮肤一直是蓝的。现在改成由 **host 半边读注册表**：
+
+1. host 半边用 `reg query` 读 `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Accent\AccentPalette`（8 个 `RRGGBBAA`，与 WinRT 报的色阶逐位一致），5 秒缓存，读不到就答 `{"supported":false}`；
+2. 通过 `/api/dsh-winui-accent` 这个 loopback 路由交给浏览器半边；
+3. 浏览器半边按 WinUI 自己对 `SystemAccentColor` 的映射落到 token 上：
+   - 浅色填充 = `AccentDark1`，深色填充 = `AccentLight2`
+   - 强调文字（链接）= `AccentDark2` / `AccentLight3`
+   - 按钮上的文字用 WCAG 相对亮度选黑或白，保证 ≥ 4.5:1
+4. 页面先铺 WinUI 默认蓝避免闪烁，拿到真实色阶后再重铺一层；窗口重新聚焦、页面重新可见、每 20 秒各复查一次。
+
+读不到注册表（非 Windows、被策略锁死、将来换实现）时回退到 WinUI 默认蓝，不会出现"半跟随"的诡异配色。
+
+> 想固定成 WinUI 默认蓝：把 `lib/client.js` 里 `fetchSystemAccent()` 直接返回 `undefined` 即可。
+>
+> Windows 改强调色时不会触发任何事件，最坏 20 秒后才反映；刷新一次页面会立刻同步。
 
 ## 为什么是「token 覆盖层」而不是「第三个主题」
 
@@ -108,16 +123,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 
 皮肤不是"装上就算完"，下面这些检查都实跑过：
 
-1. **契约测试**（`node tools/test-skin.mjs`，CI 也会跑，共 45 项）：按 DSH 浏览器的加载方式注册 module、执行
+1. **契约测试**（`node tools/test-skin.mjs`，CI 也会跑，共 60 项）：按 DSH 浏览器的加载方式注册 module、执行
    `apply`、校验两个 effect 与回收函数；用 `tools/design-tokens.txt`（从 ui-theme 样式表、构建产物、
-   UI primitives 里抽取并冻结的 457 个真实自定义属性名）逐个核对 133 个覆盖 token 名；对系统强调色与
-   WinUI 回退色各算一遍 WCAG 对比度（按钮文字、链接对画布都要 ≥ 4.5:1）；并断言圆角阶梯单调不降。
-2. **系统色能力探测**（`node tools/probe-system-colors.mjs`）：用 headless Edge 确认当前引擎是否解析
-   `AccentColor` / `AccentColorText`，以及解析出的具体色值。
+   UI primitives 里抽取并冻结的 457 个真实自定义属性名）逐个核对 133 个覆盖 token 名；校验 host 半边的
+   `AccentPalette` 解码（含截断 / 缺失 / 全零三种拒绝路径）；对**真实金色色阶**与 WinUI 回退色各算一遍 WCAG
+   对比度（按钮文字、链接对画布、引导页按钮都要 ≥ 4.5:1）；并断言圆角阶梯单调不降。
+2. **系统色来源核对**：`node tools/probe-system-colors.mjs` 确认引擎怎么解析 `AccentColor`（在这台机器上
+   它给出蓝色，而 WinRT 给出金色——这就是必须走注册表的原因）。
 3. **组合验证**：在隔离 `DSH_HOME` 里用 web 模板建 profile → 装本插件 → `dsh --dump-config`
    能打印出 `# == dsh-winui-skin` 层与 `id: winui-skin` 行。
 4. **端到端验证**：真启动该 profile，`/` 的 boot combo 里出现 `dsh-winui-skin/client.js`，
-   取回该 combo 确认服务端返回的正是本 bundle。
+   取回该 combo 确认服务端返回的正是本 bundle；再从页面里 fetch `/api/dsh-winui-accent`，
+   确认路由返回的色阶与注册表一致。
 5. **渲染与运行时验证**（`node tools/verify-visual.mjs "<带 token 的 URL>"`，headless Edge + CDP）：
    浅色 / 深色 / 设置页 / 卸载后多态截图（见 `docs/preview/`），确认 `<body>` 上 133 个内联 token、
    1 个 `data-plugin="dsh-winui-skin"` 样式表、**0 个页面异常**；还会列出**每个圆角 token 实际被哪些元素使用**
@@ -127,8 +144,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ## 已知边界
 
 - **字体依赖系统**：`Segoe UI Variable` / `Cascadia Code` 是 Windows 11 自带字体。Windows 10 上会自动回退到 `Segoe UI` / `Consolas`，观感差异不大。
-- **强调色在非 Windows / 老引擎上无法读取**：此时回退到 WinUI 默认蓝，不会出现"半跟随"的诡异配色。
-- **改系统强调色不会立刻反映**：Windows 不触发任何事件，皮肤靠重新聚焦、页面可见、以及 20 秒轮询来发现变化。
+- **强调色靠注册表读取**：非 Windows、或被策略锁死注册表时回退到 WinUI 默认蓝，不会出现"半跟随"的诡异配色。
+- **改强调色不是即时的**：Windows 不触发任何事件，皮肤靠重新聚焦、页面可见、以及 20 秒轮询来发现变化；刷新页面立刻同步。
 - **Mica 是模拟的**：浏览器无法采样桌面壁纸，画布顶端用一道极淡的白色渐变模拟 Mica 的层次感，不是真正的系统材质。
 - **原生窗口材质**：Desktop 窗口的亚克力/圆角由 Electron 与系统决定，皮肤只能同步标题栏配色，不能替换窗口背板。
 - **不覆盖第三方插件自有配色**：只改 DSH 设计系统 token；其它插件若在样式表里写死颜色，不会被跟随。
@@ -139,8 +156,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 package.json            bundle 声明（dsh.bundle.patch + dsh.client）；files 只打包插件本体
 cordis.patch.yml        一条 insert 行，把本包注册为 Loader entry
-lib/index.js            host 半边：空实现（只为让包成为一行 entry）
-lib/client.js           浏览器半边：系统强调色绑定 + token 覆盖层 + 样式表
+lib/index.js            host 半边：读注册表里的系统强调色，开 /api/dsh-winui-accent 路由
+lib/client.js           浏览器半边：拉强调色 + token 覆盖层 + 样式表
 install.ps1/.cmd        安装进某个 profile
 uninstall.ps1/.cmd      卸载
 winui-skin.common.ps1   安装脚本共用的 UTF-8/JSON 读写
