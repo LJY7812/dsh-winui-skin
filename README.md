@@ -1,5 +1,7 @@
 # dsh-winui-skin
 
+[![ci](https://github.com/LJY7812/dsh-winui-skin/actions/workflows/ci.yml/badge.svg)](https://github.com/LJY7812/dsh-winui-skin/actions/workflows/ci.yml)
+
 给 DeepSeek Harness 的 Web / Desktop 客户端换上一套 **Windows 11 / WinUI 3（Fluent 2）** 皮肤。
 
 插件是纯客户端的一半（host 半边是空实现），只做两件事：
